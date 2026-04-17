@@ -1,0 +1,455 @@
+package com.example.demo;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.swing.Timer; // Explicit import for Swing Timer
+
+public class MyFrame3 extends JFrame {
+
+    // --- A theme for all our colors ---
+    private static class ColorTheme {
+        static final Color BACKGROUND = new Color(40, 44, 52);
+        static final Color MENU_BACKGROUND = new Color(33, 37, 43);
+        static final Color DISPLAY_BACKGROUND = new Color(48, 52, 60);
+        static final Color FOREGROUND = new Color(171, 178, 191);
+        static final Color ACCENT_COLOR = new Color(97, 218, 251);
+        static final Color LIGHT_YELLOW_BG = new Color(255, 255, 224);
+    }
+
+    // --- Data Model Classes (Serializable is no longer needed) ---
+    private static class Car {
+        String id, brand, model, color, fuelType;
+        int year;
+        double dailyRate, perKmRate;
+        boolean isAvailable = true;
+
+        public Car(String id, String brand, String model, int year, String color, double dailyRate, String fuelType, double perKmRate) {
+            this.id = id; this.brand = brand; this.model = model; this.year = year; this.color = color;
+            this.dailyRate = dailyRate; this.fuelType = fuelType; this.perKmRate = perKmRate;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("ID: %s | %s %s (%d) | Day: ₹%.2f | Km: ₹%.2f | %s",
+                id, brand, model, year, dailyRate, perKmRate, isAvailable ? "Available" : "Rented");
+        }
+    }
+
+    private static class Customer {
+        String id, name, email;
+        public Customer(String id, String name, String email) { this.id = id; this.name = name; this.email = email; }
+        @Override public String toString() { return String.format("ID: %s | Name: %s | Email: %s", id, name, email); }
+    }
+
+    private static class Booking {
+        String id; Car car; Customer customer;
+        public Booking(String id, Car car, Customer customer) { this.id = id; this.car = car; this.customer = customer; }
+        @Override public String toString() { return String.format("Booking %s: %s rented by %s", id, car.brand, customer.name); }
+    }
+
+    // --- Service COMPLETELY REWRITTEN to use CSV text files ---
+    private static class InMemoryService {
+        private List<Car> cars = new ArrayList<>();
+        private List<Customer> customers = new ArrayList<>();
+        private List<Booking> bookings = new ArrayList<>();
+        private AtomicInteger bookingIdCounter;
+
+        public InMemoryService() {
+            loadDataFromCsv();
+        }
+        
+        private void loadDataFromCsv() {
+            File carsFile = new File("cars.csv");
+            if (!carsFile.exists()) {
+                System.out.println("No data files found. Creating default data and files.");
+                populateInitialData();
+                saveDataToCsv(); // Create the files for the first time
+                return;
+            }
+
+            // --- Load Cars ---
+            try (BufferedReader br = new BufferedReader(new FileReader("cars.csv"))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String[] values = line.split(",");
+                    Car car = new Car(values[0], values[1], values[2], Integer.parseInt(values[3]), values[4], Double.parseDouble(values[5]), values[6], Double.parseDouble(values[7]));
+                    car.isAvailable = Boolean.parseBoolean(values[8]);
+                    cars.add(car);
+                }
+            } catch (IOException e) { System.err.println("Error loading cars.csv: " + e.getMessage()); }
+
+            // --- Load Customers ---
+            try (BufferedReader br = new BufferedReader(new FileReader("customers.csv"))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String[] values = line.split(",");
+                    customers.add(new Customer(values[0], values[1], values[2]));
+                }
+            } catch (IOException e) { System.err.println("Error loading customers.csv: " + e.getMessage()); }
+
+            // --- Load Bookings ---
+            try (BufferedReader br = new BufferedReader(new FileReader("bookings.csv"))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    String[] values = line.split(",");
+                    String bookingId = values[0];
+                    Optional<Car> car = findCarById(values[1]);
+                    Optional<Customer> customer = findCustomerById(values[2]);
+                    if (car.isPresent() && customer.isPresent()) {
+                        bookings.add(new Booking(bookingId, car.get(), customer.get()));
+                    }
+                }
+            } catch (IOException e) { System.err.println("Error loading bookings.csv: " + e.getMessage()); }
+            
+            // Recalculate the booking counter
+            int maxId = bookings.stream()
+                .map(b -> b.id.replace("B", ""))
+                .mapToInt(Integer::parseInt)
+                .max().orElse(100);
+            bookingIdCounter = new AtomicInteger(maxId);
+        }
+
+        public void saveDataToCsv() {
+            // --- Save Cars ---
+            try (PrintWriter pw = new PrintWriter(new FileWriter("cars.csv"))) {
+                for (Car car : cars) {
+                    pw.println(String.join(",", car.id, car.brand, car.model, String.valueOf(car.year), car.color, String.valueOf(car.dailyRate), car.fuelType, String.valueOf(car.perKmRate), String.valueOf(car.isAvailable)));
+                }
+            } catch (IOException e) { System.err.println("Error saving cars.csv: " + e.getMessage()); }
+            
+            // --- Save Customers ---
+            try (PrintWriter pw = new PrintWriter(new FileWriter("customers.csv"))) {
+                for (Customer customer : customers) {
+                    pw.println(String.join(",", customer.id, customer.name, customer.email));
+                }
+            } catch (IOException e) { System.err.println("Error saving customers.csv: " + e.getMessage()); }
+
+            // --- Save Bookings ---
+            try (PrintWriter pw = new PrintWriter(new FileWriter("bookings.csv"))) {
+                for (Booking booking : bookings) {
+                    pw.println(String.join(",", booking.id, booking.car.id, booking.customer.id));
+                }
+            } catch (IOException e) { System.err.println("Error saving bookings.csv: " + e.getMessage()); }
+        }
+        
+        // --- THIS METHOD HAS BEEN CHANGED ---
+        private void populateInitialData() {
+            cars.add(new Car("C01", "Maruti", "Swift", 2023, "Red", 2500.0, "Petrol", 11.0));
+            cars.add(new Car("C02", "Hyundai", "Creta", 2022, "White", 3500.0, "Diesel", 14.0));
+            cars.add(new Car("C03", "Tata", "NexonEV", 2024, "Blue", 4000.0, "Electric", 15.0));
+            customers.add(new Customer("U01", "Modiji", "modi@example.com"));
+            customers.add(new Customer("U02", "Rahul gandhi", "rahul@example.com"));
+            bookingIdCounter = new AtomicInteger(100);
+        }
+
+        public List<Car> getAllCars() { return cars; }
+        public List<Customer> getAllCustomers() { return customers; }
+        public List<Booking> getAllBookings() { return bookings; }
+        public Optional<Car> findCarById(String id) { return cars.stream().filter(c -> c.id.equalsIgnoreCase(id)).findFirst(); }
+        public Optional<Car> findAvailableCarById(String id) { return cars.stream().filter(c -> c.id.equalsIgnoreCase(id) && c.isAvailable).findFirst(); }
+        public Optional<Customer> findCustomerById(String id) { return customers.stream().filter(c -> c.id.equalsIgnoreCase(id)).findFirst(); }
+        public Optional<Booking> findBookingById(String id) { return bookings.stream().filter(b -> b.id.equalsIgnoreCase(id)).findFirst(); }
+
+        public String rentCar(String carId, String customerId) {
+            Optional<Car> carOpt = findAvailableCarById(carId);
+            if (!carOpt.isPresent()) return "Car not available or does not exist.";
+            if (!findCustomerById(customerId).isPresent()) return "Customer does not exist.";
+            carOpt.get().isAvailable = false;
+            String bookingId = "B" + bookingIdCounter.incrementAndGet();
+            bookings.add(new Booking(bookingId, carOpt.get(), findCustomerById(customerId).get()));
+            return "Car rented successfully! Booking ID: " + bookingId;
+        }
+
+        public String returnCarAndCalculateCost(String bookingId, int daysRented, double kmDriven) {
+            Optional<Booking> bookingOpt = findBookingById(bookingId);
+            if (!bookingOpt.isPresent()) return "Error: Booking ID not found.";
+            Booking booking = bookingOpt.get();
+            Car car = booking.car;
+            if (car.isAvailable) return "Error: This car has already been returned.";
+            double fixedCost = daysRented * car.dailyRate;
+            double mileageCost = kmDriven * car.perKmRate;
+            double totalCost = fixedCost + mileageCost;
+            car.isAvailable = true;
+            bookings.remove(booking);
+            return String.format("Return Successful!\n\nFixed Cost (%d days @ ₹%.2f/day): ₹%.2f\nMileage Cost (%.1f km @ ₹%.2f/km): ₹%.2f\n-------------------------------------------\nTOTAL COST: ₹%.2f",
+                daysRented, car.dailyRate, fixedCost, kmDriven, car.perKmRate, mileageCost, totalCost);
+        }
+        
+        public String deleteCustomerById(String customerId) {
+            Optional<Customer> custOpt = findCustomerById(customerId);
+            if (!custOpt.isPresent()) return "Customer not found.";
+            boolean hasActiveBooking = bookings.stream().anyMatch(b -> b.customer.id.equalsIgnoreCase(customerId));
+            if (hasActiveBooking) return "Error: Customer cannot be deleted as they have an active rental.";
+            customers.remove(custOpt.get());
+            return "Customer " + custOpt.get().name + " deleted successfully.";
+        }
+    }
+    
+    private static class EntryScreen extends JWindow {
+        private final JProgressBar progressBar;
+        public EntryScreen() {
+            setSize(500, 300); setLocationRelativeTo(null);
+            JPanel contentPanel = new JPanel(new BorderLayout()); contentPanel.setBackground(ColorTheme.BACKGROUND);
+            contentPanel.setBorder(BorderFactory.createLineBorder(ColorTheme.ACCENT_COLOR, 2));
+            JLabel welcomeLabel = new JLabel("Indian Car Rental System", SwingConstants.CENTER);
+            welcomeLabel.setFont(new Font("SansSerif", Font.BOLD, 24)); welcomeLabel.setForeground(ColorTheme.FOREGROUND);
+            contentPanel.add(welcomeLabel, BorderLayout.CENTER);
+            progressBar = new JProgressBar(0, 100); progressBar.setForeground(ColorTheme.ACCENT_COLOR);
+            progressBar.setStringPainted(true); progressBar.setString("Loading application...");
+            progressBar.setFont(new Font("SansSerif", Font.BOLD, 12));
+            progressBar.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+            contentPanel.add(progressBar, BorderLayout.SOUTH); add(contentPanel);
+        }
+        public void setProgress(int value) { progressBar.setValue(value); }
+    }
+
+    private final InMemoryService service = new InMemoryService();
+    private final JTextArea displayArea = new JTextArea();
+    private final JPanel centerPanel = new JPanel(new CardLayout());
+    private final CardLayout cardLayout = (CardLayout) centerPanel.getLayout();
+
+    public MyFrame3() {
+        setTitle("Indian Car Rental System (with Text File Saving)");
+        setSize(1000, 700);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                service.saveDataToCsv(); e.getWindow().dispose(); System.exit(0);
+            }
+        });
+        setLocationRelativeTo(null);
+        setLayout(new BorderLayout(5, 5));
+        String[] menuOptions = {
+            "1. List All Cars", "2. List All Customers", "3. Add a New Car", "4. Add a New Customer",
+            "5. Rent a Car", "6. Return Car & Get Cost", "7. Delete a Customer",
+            "8. List Active Bookings", "9. View Booking & Calc Cost", "10. Exit"
+        };
+        JList<String> menuList = new JList<>(menuOptions); styleMenuList(menuList);
+        add(new JScrollPane(menuList), BorderLayout.WEST);
+        styleDisplayArea();
+        centerPanel.add(new JScrollPane(displayArea), "DISPLAY");
+        centerPanel.add(createAddCarPanel(), "ADD_CAR_FORM");
+        centerPanel.add(createAddCustomerPanel(), "ADD_CUSTOMER_FORM");
+        add(centerPanel, BorderLayout.CENTER);
+        menuList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                handleMenuSelection(menuList.getSelectedValue());
+                SwingUtilities.invokeLater(menuList::clearSelection);
+            }
+        });
+        displayArea.setText("Welcome! Data loaded from text files.\nPlease select an option.");
+    }
+
+    private void handleMenuSelection(String selection) {
+        if (selection == null) return;
+        styleDisplayArea(); displayArea.setText("");
+        cardLayout.show(centerPanel, "DISPLAY");
+        String choice = selection.split("\\.")[0];
+        switch (choice) {
+            case "1": case "2": case "8":
+                displayArea.setBackground(ColorTheme.LIGHT_YELLOW_BG); displayArea.setForeground(Color.BLACK);
+                if (choice.equals("1")) service.getAllCars().forEach(c -> displayArea.append(c + "\n"));
+                if (choice.equals("2")) service.getAllCustomers().forEach(c -> displayArea.append(c + "\n"));
+                if (choice.equals("8")) service.getAllBookings().forEach(b -> displayArea.append(b + "\n"));
+                break;
+            case "3": cardLayout.show(centerPanel, "ADD_CAR_FORM"); break;
+            case "4": cardLayout.show(centerPanel, "ADD_CUSTOMER_FORM"); break;
+            case "5": rentCar(); break;
+            case "6": returnCarAndCalc(); break;
+            case "7": deleteCustomer(); break;
+            case "9": viewBookingAndCalc(); break;
+            case "10":
+                service.saveDataToCsv();
+                JOptionPane.showMessageDialog(this, "Data saved to text files. Goodbye!", "Goodbye", JOptionPane.INFORMATION_MESSAGE);
+                System.exit(0);
+                break;
+        }
+    }
+    
+    private void rentCar() {
+        String carId = JOptionPane.showInputDialog(this, "Enter Car ID to Rent:"); if (carId == null) return;
+        String custId = JOptionPane.showInputDialog(this, "Enter Customer ID:"); if (custId == null) return;
+        String result = service.rentCar(carId, custId);
+        JOptionPane.showMessageDialog(this, result);
+        handleMenuSelection("1. List All Cars");
+    }
+
+    private void returnCarAndCalc() {
+        String bookingId = JOptionPane.showInputDialog(this, "Enter Booking ID to return:");
+        if (bookingId == null) return;
+        try {
+            String daysStr = JOptionPane.showInputDialog(this, "Enter total days rented:");
+            if (daysStr == null) return;
+            int days = Integer.parseInt(daysStr);
+            String kmStr = JOptionPane.showInputDialog(this, "Enter total kilometers driven:");
+            if (kmStr == null) return;
+            double kms = Double.parseDouble(kmStr);
+            String result = service.returnCarAndCalculateCost(bookingId, days, kms);
+            JOptionPane.showMessageDialog(this, result, "Final Cost", JOptionPane.INFORMATION_MESSAGE);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Invalid number format for days or kilometers.", "Input Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private void deleteCustomer() {
+        String custId = JOptionPane.showInputDialog(this, "Enter Customer ID to Delete:", "Delete Customer", JOptionPane.WARNING_MESSAGE);
+        if (custId != null && !custId.trim().isEmpty()) {
+            String result = service.deleteCustomerById(custId);
+            JOptionPane.showMessageDialog(this, result, "Deletion Result", JOptionPane.INFORMATION_MESSAGE);
+            handleMenuSelection("2. List All Customers");
+        }
+    }
+
+    private void viewBookingAndCalc() {
+        String bookingId = JOptionPane.showInputDialog(this, "Enter Booking ID to view:");
+        if (bookingId == null || bookingId.trim().isEmpty()) return;
+        Optional<Booking> bookingOpt = service.findBookingById(bookingId);
+        if (!bookingOpt.isPresent()) {
+            JOptionPane.showMessageDialog(this, "Booking ID not found.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        Booking booking = bookingOpt.get();
+        displayArea.setBackground(ColorTheme.LIGHT_YELLOW_BG);
+        displayArea.setForeground(Color.BLACK);
+        displayArea.setText("--- Booking Details ---\n");
+        displayArea.append("Booking ID: " + booking.id + "\n");
+        displayArea.append("Customer: " + booking.customer.toString() + "\n");
+        displayArea.append("Car: " + booking.car.toString() + "\n");
+        int choice = JOptionPane.showConfirmDialog(this, "Do you want to calculate a potential cost for this booking?", "Calculate Cost", JOptionPane.YES_NO_OPTION);
+        if (choice != JOptionPane.YES_OPTION) return;
+        try {
+            String daysStr = JOptionPane.showInputDialog(this, "Enter estimated rental days:"); if (daysStr == null) return;
+            int days = Integer.parseInt(daysStr);
+            String kmStr = JOptionPane.showInputDialog(this, "Enter estimated kilometers driven:"); if (kmStr == null) return;
+            double kms = Double.parseDouble(kmStr);
+            Car car = booking.car;
+            double fixedCost = days * car.dailyRate;
+            double mileageCost = kms * car.perKmRate;
+            double totalCost = fixedCost + mileageCost;
+            String result = String.format("--- Cost Estimation ---\n\nFixed Cost (%d days @ ₹%.2f/day): ₹%.2f\nMileage Cost (%.1f km @ ₹%.2f/km): ₹%.2f\n-------------------------------------------\nESTIMATED TOTAL: ₹%.2f",
+                days, car.dailyRate, fixedCost, kms, car.perKmRate, mileageCost, totalCost);
+            JOptionPane.showMessageDialog(this, result, "Cost Estimation", JOptionPane.INFORMATION_MESSAGE);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Invalid number format for days or kilometers.", "Input Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private JPanel createAddCarPanel() {
+        JPanel panel = createFormPanel();
+        JTextField id = new JTextField(), brand = new JTextField(), model = new JTextField(), year = new JTextField();
+        JTextField color = new JTextField(), dailyRate = new JTextField(), fuel = new JTextField(), kmRate = new JTextField();
+        JButton saveButton = new JButton("Save Car");
+        
+        addFormField(panel, "ID:", id); addFormField(panel, "Brand:", brand); addFormField(panel, "Model:", model);
+        addFormField(panel, "Year:", year); addFormField(panel, "Color:", color);
+        addFormField(panel, "Daily Rate (₹):", dailyRate);
+        addFormField(panel, "Fuel Type:", fuel); addFormField(panel, "Rate per Km (₹):", kmRate);
+        panel.add(new JLabel()); panel.add(saveButton);
+        
+        saveButton.addActionListener(e -> {
+            String carId = id.getText();
+            if (carId == null || carId.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Car ID cannot be empty.", "Input Error", JOptionPane.ERROR_MESSAGE); return;
+            }
+            if (service.findCarById(carId).isPresent()) {
+                JOptionPane.showMessageDialog(this, "A car with this ID already exists. Please choose a different ID.", "Input Error", JOptionPane.ERROR_MESSAGE); return;
+            }
+            try {
+                service.cars.add(new Car(carId, brand.getText(), model.getText(), Integer.parseInt(year.getText()), color.getText(), Double.parseDouble(dailyRate.getText()), fuel.getText(), Double.parseDouble(kmRate.getText())));
+                JOptionPane.showMessageDialog(this, "Car saved successfully!");
+                handleMenuSelection("1. List All Cars");
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Error: Please check the format for Year, Daily Rate, and Km Rate.", "Input Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        return panel;
+    }
+
+    private JPanel createAddCustomerPanel() {
+        JPanel panel = createFormPanel();
+        JTextField id = new JTextField(), name = new JTextField(), email = new JTextField();
+        JButton saveButton = new JButton("Save Customer");
+        
+        addFormField(panel, "ID:", id); addFormField(panel, "Name:", name); addFormField(panel, "Email:", email);
+        panel.add(new JLabel()); panel.add(saveButton);
+        
+        saveButton.addActionListener(e -> {
+            String custId = id.getText();
+            if (custId == null || custId.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Customer ID cannot be empty.", "Input Error", JOptionPane.ERROR_MESSAGE); return;
+            }
+            if (service.findCustomerById(custId).isPresent()) {
+                JOptionPane.showMessageDialog(this, "A customer with this ID already exists. Please choose a different ID.", "Input Error", JOptionPane.ERROR_MESSAGE); return;
+            }
+            service.customers.add(new Customer(custId, name.getText(), email.getText()));
+            JOptionPane.showMessageDialog(this, "Customer saved successfully!");
+            handleMenuSelection("2. List All Customers");
+        });
+        return panel;
+    }
+
+    private JPanel createFormPanel() {
+        JPanel panel = new JPanel(new GridLayout(0, 2, 10, 10));
+        panel.setBackground(ColorTheme.DISPLAY_BACKGROUND);
+        panel.setBorder(new EmptyBorder(20, 20, 20, 20));
+        return panel;
+    }
+
+    private void addFormField(JPanel panel, String label, JComponent component) {
+        JLabel l = new JLabel(label);
+        l.setForeground(ColorTheme.FOREGROUND);
+        panel.add(l);
+        panel.add(component);
+    }
+    
+    private void styleMenuList(JList<String> list) {
+        list.setBackground(ColorTheme.MENU_BACKGROUND);
+        list.setForeground(ColorTheme.FOREGROUND);
+        list.setSelectionBackground(ColorTheme.ACCENT_COLOR);
+        list.setSelectionForeground(ColorTheme.BACKGROUND);
+        list.setFixedCellHeight(40);
+        list.setFont(new Font("SansSerif", Font.BOLD, 14));
+        list.setBorder(new EmptyBorder(10, 15, 10, 15));
+    }
+    
+    private void styleDisplayArea() {
+        displayArea.setBackground(ColorTheme.DISPLAY_BACKGROUND);
+        displayArea.setForeground(ColorTheme.FOREGROUND);
+        displayArea.setFont(new Font("Monospaced", Font.BOLD, 14));
+        displayArea.setEditable(false);
+        displayArea.setMargin(new Insets(15, 15, 15, 15));
+    }
+    
+    public static void main(String[] args) {
+        UIManager.put("OptionPane.background", ColorTheme.BACKGROUND);
+        UIManager.put("Panel.background", ColorTheme.BACKGROUND);
+        UIManager.put("OptionPane.messageForeground", ColorTheme.FOREGROUND);
+        EntryScreen entryScreen = new EntryScreen();
+        entryScreen.setVisible(true);
+        Timer timer = new Timer(30, new ActionListener() {
+            private int progress = 0;
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                progress++;
+                entryScreen.setProgress(progress);
+                if (progress >= 100) {
+                    ((Timer) e.getSource()).stop();
+                    entryScreen.dispose();
+                    SwingUtilities.invokeLater(() -> new MyFrame3().setVisible(true));
+                }
+            }
+        });
+        timer.start();
+    }
+}
